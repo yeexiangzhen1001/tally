@@ -20,6 +20,8 @@ final class NotchState {
     var shapeSize: CGSize?
     /// 窗口最终大小，不参与动画：内容按它排版，动画期间窗口多出来的透明余量不会把内容撑宽。
     var layoutSize: CGSize?
+    /// 开合走 Metal 神奇效果（`GenieView`）：SwiftUI 这边不再自己做开合动画，直接跳到终态，由覆盖层演动画。
+    var genieActive = false
     var contentHeightChanged: (() -> Void)?
     /// 齿轮按钮和右键菜单的「设置…」都走这里，由 AppDelegate 接上设置窗口。
     var openSettings: (() -> Void)?
@@ -253,7 +255,22 @@ final class NotchController {
         panel = NotchPanel(contentRect: CGRect(origin: .zero, size: CGSize(width: NotchGeometry.openWidth, height: NotchGeometry.minOpenHeight)))
         hostView = NotchHostView(rootView: NotchView(state: state))
         hostView.autoresizingMask = [.width, .height]
-        panel.contentView = hostView
+        if GenieView.isEnabled, let overlay = GenieView(overlay: ()) {
+            // 覆盖层和真面板并列放在一个容器里：真面板 alphaValue 设 0 时，它的子视图也会跟着看不见
+            let container = NSView(frame: hostView.frame)
+            container.autoresizingMask = [.width, .height]
+            container.addSubview(hostView)
+            hostView.frame = container.bounds
+            overlay.frame = container.bounds
+            overlay.autoresizingMask = [.width, .height]
+            overlay.isHidden = true
+            container.addSubview(overlay)
+            panel.contentView = container
+            genie = overlay
+            state.genieActive = true
+        } else {
+            panel.contentView = hostView
+        }
 
         hostView.onMouseEntered = { [weak self] in self?.hoverStarted() }
         hostView.onMouseExited = { [weak self] in self?.hoverEnded() }
@@ -512,6 +529,9 @@ final class NotchController {
 
     /// 窗口最终该有的 frame；动画期间 `panel.frame` 可能还撑着更大的范围，悬停判断和「是否缩小」都以它为准。
     private var targetFrame: CGRect?
+    private var genie: GenieView?
+    /// 每次开合 +1：排队等下一轮主循环截图的展开，被后来的收起 / 再展开打断后作废。
+    private var genieToken = 0
     private var settleToken = 0
 
     private func applyFrame(animated: Bool) {
@@ -538,7 +558,9 @@ final class NotchController {
             let heightOnly = state.isOpen && abs(frame.width - previous.width) < 0.5
             // expo-out 起步速度最大，黑壳直接跟着它走显得生硬；改成无回弹的临界阻尼弹簧，起步柔、收尾也软
             // 只有展开带一点回弹；收起回弹会缩到比刘海还小，高度微调也不需要
-            let duration = heightOnly ? 0.22 : (state.isOpen ? 0.4 : 0.26)
+            let useGenie = state.genieActive && !heightOnly
+            let duration = useGenie ? (state.isOpen ? GenieView.openDuration : GenieView.closeDuration)
+                                    : (heightOnly ? 0.22 : (state.isOpen ? 0.4 : 0.26))
             let curve: Animation = (state.isOpen && !heightOnly) ? .spring(duration: duration, bounce: 0.18) : .smooth(duration: duration)
             // 回弹会冲过最终大小，窗口两侧和下方多留一圈透明余量，不然冲出去的那截被窗口边缘切平
             let margin: CGFloat = 28
@@ -546,7 +568,12 @@ final class NotchController {
             let union = panel.frame.union(room)
             if union != panel.frame { panel.setFrame(union, display: true) }
             state.layoutSize = size
-            withAnimation(curve) { state.shapeSize = size }
+            if useGenie {
+                // 动画由覆盖层演，SwiftUI 直接到终态
+                state.shapeSize = size
+            } else {
+                withAnimation(curve) { state.shapeSize = size }
+            }
             let token = settleToken
             DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.15) { [weak self] in
                 guard let self, self.settleToken == token, self.panel.frame != frame else { return }
@@ -557,6 +584,79 @@ final class NotchController {
             state.layoutSize = size
             panel.setFrame(frame, display: true)
         }
+    }
+
+    // MARK: 神奇效果
+
+    /// 把当前展开态面板截成图（窗口里顶部居中的那块）。截不到返回 nil，调用方退回无动画。
+    private func snapshotPanel() -> CGImage? {
+        guard let size = state.layoutSize, size.width > 1, size.height > 1 else { return nil }
+        let bounds = hostView.bounds
+        let rect = CGRect(x: (bounds.width - size.width) / 2,
+                          y: hostView.isFlipped ? 0 : bounds.height - size.height,
+                          width: size.width, height: size.height)
+        guard let rep = hostView.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        hostView.cacheDisplay(in: rect, to: rep)
+        // 正中一个像素是黑壳，没画出来就是全透明：当作截失败
+        guard let center = rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2), center.alphaComponent > 0.5 else { return nil }
+        return rep.cgImage
+    }
+
+    /// SwiftUI 要等下一次屏幕刷新才把展开态画出来：隔一帧截一次，截到的是空白就再等，最多四次，实在不行退回直接展开。
+    private func startOpenGenie(token: Int, from progress: Double, attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+            guard let self, self.genieToken == token, self.state.isOpen else { return }
+            // 截图会把 alphaValue 一并算进去：同一轮里恢复、截完再藏，中间没有上屏
+            self.hostView.alphaValue = 1
+            self.hostView.layoutSubtreeIfNeeded()
+            self.hostView.displayIfNeeded()
+            let image = self.snapshotPanel()
+            self.hostView.alphaValue = 0
+            if let image {
+                self.playGenie(image: image, opening: true, from: progress)
+            } else if attempt < 3 {
+                self.startOpenGenie(token: token, from: progress, attempt: attempt + 1)
+            } else {
+                self.endGenie()
+            }
+        }
+    }
+
+    private func playGenie(image: CGImage, opening: Bool, from progress: Double) {
+        guard let genie, let metrics, let notch = NotchGeometry.closedSize(metrics) else { return }
+        // 收起时 layoutSize 已经是刘海大小：展开态的点尺寸从截图像素反推
+        let scale = panel.backingScaleFactor
+        let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        genie.isHidden = false
+        hostView.alphaValue = 0
+        genie.play(image: image, size: size, notch: notch, opening: opening, from: progress) { [weak self] in
+            self?.endGenie()
+        }
+        debugDump(image: image, genie: genie, opening: opening)
+    }
+
+    private func endGenie() {
+        genie?.isHidden = true
+        hostView.alphaValue = 1
+    }
+
+    /// 打断正在演的动画并换回真面板；返回停下时的进度，没有在演返回 nil。
+    private func cancelGenie() -> Double? {
+        genieToken += 1
+        defer { endGenie() }
+        guard let genie, genie.isPlaying else { return nil }
+        return genie.stop()
+    }
+
+    private func debugDump(image: CGImage, genie: GenieView, opening: Bool) {
+        guard let dir = UserDefaults.standard.string(forKey: "genieDebugDir") else { return }
+        func write(_ cg: CGImage?, _ name: String) {
+            guard let cg, let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { return }
+            try? data.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
+        }
+        let tag = opening ? "open" : "close"
+        write(image, "\(tag)-snapshot.png")
+        for p in [0.15, 0.35, 0.6, 0.85, 1.0] { write(genie.debugRender(progress: p), "\(tag)-p\(Int(p * 100)).png") }
     }
 
     // MARK: 展开 / 收起
@@ -572,9 +672,14 @@ final class NotchController {
         // 全屏隐藏期间 ⌥⇧T、拖文件都不展开：makeKeyAndOrderFront 会把面板放回全屏空间
         guard !hiddenForFullScreen else { return }
         clearPeek()
+        // 收起的神奇效果还在演就接着它当前的进度往回展开，不跳变
+        let resumeFrom = cancelGenie() ?? 0
         state.isPinned = pinned
+        // 先藏起真面板：SwiftUI 要到下一轮主循环才把展开态画出来，那时再截图，不先藏会闪一下终态
+        if state.genieActive { hostView.alphaValue = 0 }
         state.isOpen = true
         applyFrame(animated: true)
+        if state.genieActive { startOpenGenie(token: genieToken, from: resumeFrom, attempt: 0) }
         panel.makeKeyAndOrderFront(nil)
         installOutsideClickMonitor()
         installGestureMonitor()
@@ -599,6 +704,9 @@ final class NotchController {
         closeTimer?.invalidate()
         state.isPinned = false
         guard state.isOpen else { return }
+        // 先截图再改状态：截的是还开着的面板；展开动画还在演就从它当前进度往回收
+        let resumeFrom = cancelGenie() ?? 1
+        let closeImage = state.genieActive ? snapshotPanel() : nil
         state.isOpen = false
         closedAt = Date()
         shrunkFrom = nil
@@ -613,6 +721,7 @@ final class NotchController {
         // 之后打的字照样全进它，直到用户点一下别处。探针实测 resignKey 能把焦点还给原来的 app，再 makeKey 照常拿回
         if panel.isKeyWindow { panel.resignKey() }
         applyFrame(animated: true)
+        if let closeImage { playGenie(image: closeImage, opening: false, from: resumeFrom) }
         NetworkStore.shared.stop()
         SystemStore.shared.stop()
         RunningAppsStore.shared.stop()

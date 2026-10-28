@@ -26,10 +26,10 @@ struct NotchView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     }
                     // 壳先撑开，内容晚 0.1 s 从模糊里浮出来；收起时直接淡掉，别在缩小的壳外面拖影
-                    .transition(AsymmetricTransition(
+                    .transition(state.genieActive ? AnyTransition.identity : AnyTransition(AsymmetricTransition(
                         insertion: OpacityTransition().animation(.easeOut(duration: 0.22).delay(0.12)),
                         removal: OpacityTransition().animation(.easeOut(duration: 0.12))
-                    ))
+                    )))
             }
             // 闭合态什么都不画：刘海正下方是摄像头外壳，没有像素，画了也看不见（截图却拍得到）
         }
@@ -40,7 +40,7 @@ struct NotchView: View {
             if targeted { state.dropEntered?() }
         }
         // 圆角和窗口 frame 用同一条曲线、同一个时长，看起来才是一体的
-        .animation(state.isOpen ? .spring(duration: 0.4, bounce: 0.18) : .smooth(duration: 0.26), value: state.isOpen)
+        .animation(state.genieActive ? nil : (state.isOpen ? .spring(duration: 0.4, bounce: 0.18) : .smooth(duration: 0.26)), value: state.isOpen)
     }
 
     // MARK: 展开态
