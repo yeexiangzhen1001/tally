@@ -4,7 +4,7 @@ import SwiftUI
 /// 「应用」页：在跑的 app，按内存降序，不带卡片标题（页签已经说明了是什么）；Dock 里看不见的名字后面带一个「眼睛划掉」图标。点行打开，右键退出，悬停高亮。
 struct AppsPage: View {
     var store = RunningAppsStore.shared
-    @State private var hovered: pid_t?
+    @LocalState private var hovered: pid_t?
     private static let placeholder = NSWorkspace.shared.icon(for: .applicationBundle)
 
     var body: some View {

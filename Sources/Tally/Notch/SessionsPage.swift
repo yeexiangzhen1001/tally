@@ -74,7 +74,7 @@ struct SessionRow: View {
     /// 同目录有别的会话时跟在目录名后面的终端号，nil 不显示。
     let tty: String?
     var jump = SessionJump.shared
-    @State private var hovered = false
+    @LocalState private var hovered = false
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -182,12 +182,15 @@ final class SessionJump {
     private(set) var failures: [String: String] = [:]
     /// 按住 ⌘ 时为真：前十行行尾显示 ⌘1…⌘9、⌘0。面板的键盘监视器写。
     var shortcutHints = false
+    /// 跳成功后调：控制器接上，悬停展开的面板跟着收起（钉住的不动）；失败时不收，行里的红字还要看。
+    var didJump: (() -> Void)?
 
     /// 返回跳没跳成。
     @discardableResult
     func run(_ session: SessionRecord) async -> Bool {
         let failure = await Self.attempt(session)
         failures[session.sessionId] = failure
+        if failure == nil { didJump?() }
         return failure == nil
     }
 
@@ -258,7 +261,7 @@ struct StateIcon: View {
     let stale: Bool
     let backgroundWork: Bool
     var identity = ""
-    @State private var visible = false
+    @LocalState private var visible = false
 
     var body: some View {
         SessionEyes(mood: mood, identity: identity, active: visible)

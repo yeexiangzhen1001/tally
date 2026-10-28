@@ -158,9 +158,9 @@ private struct KeepAwakeCard: View {
     var lid = LidSleepBlocker.shared
     var preferences = PreferencesStore.shared
     /// 「自定义」那颗点开之后才出现的步进行。
-    @State private var editingCustom = false
+    @LocalState private var editingCustom = false
     /// 授权框弹着的时候不让重复点。
-    @State private var authorizing = false
+    @LocalState private var authorizing = false
 
     private static let clock: DateFormatter = {
         let f = DateFormatter()

@@ -7,7 +7,7 @@ struct NotchView: View {
     var usage = UsageStore.shared
     var privacy = PrivacyWatcher.shared
     var preferences = PreferencesStore.shared
-    @State private var dropTargeted = false
+    @LocalState private var dropTargeted = false
 
     var body: some View {
         let waiting = store.waitingCount()
@@ -15,11 +15,19 @@ struct NotchView: View {
             NotchShape(top: state.isOpen ? NotchGeometry.shoulder : 0,
                        bottom: state.isOpen ? NotchGeometry.openBottomRadius : NotchGeometry.closedBottomRadius)
                 .fill(.black)
+                .frame(width: state.shapeSize?.width, height: state.shapeSize?.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if state.isOpen {
                 openContent(waiting: waiting)
+                    .frame(width: state.layoutSize?.width, height: state.layoutSize?.height, alignment: .top)
+                    // 窗口已经是最终大小，壳还在长：内容按壳的当前范围裁，不会露到黑壳外面
+                    .mask(alignment: .top) {
+                        Rectangle().frame(width: state.shapeSize?.width, height: state.shapeSize?.height)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
                     // 壳先撑开，内容晚 0.1 s 从模糊里浮出来；收起时直接淡掉，别在缩小的壳外面拖影
                     .transition(AsymmetricTransition(
-                        insertion: BlurReplaceTransition(configuration: .downUp).animation(.smooth(duration: 0.3).delay(0.1)),
+                        insertion: OpacityTransition().animation(.easeOut(duration: 0.22).delay(0.12)),
                         removal: OpacityTransition().animation(.easeOut(duration: 0.12))
                     ))
             }
@@ -32,7 +40,7 @@ struct NotchView: View {
             if targeted { state.dropEntered?() }
         }
         // 圆角和窗口 frame 用同一条曲线、同一个时长，看起来才是一体的
-        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: state.isOpen ? 0.38 : 0.30), value: state.isOpen)
+        .animation(state.isOpen ? .spring(duration: 0.4, bounce: 0.18) : .smooth(duration: 0.26), value: state.isOpen)
     }
 
     // MARK: 展开态
@@ -248,7 +256,7 @@ struct KeepAwakeButton: View {
 struct RefreshControl: View {
     let page: LaunchOptions.Page
     var usage: UsageStore
-    @State private var throttled = false
+    @LocalState private var throttled = false
 
     private static let clock: DateFormatter = {
         let f = DateFormatter()

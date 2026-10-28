@@ -16,6 +16,10 @@ final class NotchState {
     var notchHeight: CGFloat = 32
     /// 当前页内容的自然高度，页视图量了报上来；面板高度跟着它走。
     var contentHeight: CGFloat = 0
+    /// 黑色壳当前该有的尺寸：窗口一步到位，壳在窗口里用 SwiftUI 动画长大 / 缩回；nil 表示还没布局过，先铺满窗口。
+    var shapeSize: CGSize?
+    /// 窗口最终大小，不参与动画：内容按它排版，动画期间窗口多出来的透明余量不会把内容撑宽。
+    var layoutSize: CGSize?
     var contentHeightChanged: (() -> Void)?
     /// 齿轮按钮和右键菜单的「设置…」都走这里，由 AppDelegate 接上设置窗口。
     var openSettings: (() -> Void)?
@@ -279,6 +283,10 @@ final class NotchController {
                 self.state.select(.shelf)
             }
         }
+        SessionJump.shared.didJump = { [weak self] in
+            guard let self, self.state.isOpen, !self.state.isPinned else { return }
+            self.close()
+        }
         state.contentHeightChanged = { [weak self] in
             guard let self, self.state.isOpen else { return }
             self.applyFrame(animated: true)
@@ -502,6 +510,10 @@ final class NotchController {
         }
     }
 
+    /// 窗口最终该有的 frame；动画期间 `panel.frame` 可能还撑着更大的范围，悬停判断和「是否缩小」都以它为准。
+    private var targetFrame: CGRect?
+    private var settleToken = 0
+
     private func applyFrame(animated: Bool) {
         guard let metrics, let closed = NotchGeometry.closedSize(metrics) else { return }
         let size: CGSize
@@ -512,19 +524,37 @@ final class NotchController {
             size = closed
         }
         let frame = NotchGeometry.frame(for: size, on: metrics)
-        if state.isOpen, frame.height < panel.frame.height - 0.5 {
-            shrunkFrom = panel.frame
+        let previous = targetFrame ?? panel.frame
+        if state.isOpen, frame.height < previous.height - 0.5 {
+            shrunkFrom = previous
         }
+        targetFrame = frame
+        settleToken += 1
         if animated {
-            // 开合用 expo-out（起步快、收尾软，接近 Atoll 的临界阻尼弹簧；NSAnimationContext 只吃 timing function）；
-            // 展开着只是换页或内容增减，高度小幅变化用短的 easeOut，长动画每帧重排 SwiftUI 会卡
-            let heightOnly = state.isOpen && abs(frame.width - panel.frame.width) < 0.5
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = heightOnly ? 0.2 : (state.isOpen ? 0.38 : 0.30)
-                context.timingFunction = heightOnly ? CAMediaTimingFunction(name: .easeOut) : CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-                panel.animator().setFrame(frame, display: true)
+            // 窗口自己逐帧变形走的是主线程定时器，和屏幕刷新不同步，黑壳还要慢一帧才跟上，浅色背景上边缘一顿一顿。
+            // 改成窗口先一步撑到新旧范围的并集（透明的，看不出来），只让 SwiftUI 里的黑壳动画长大 / 缩回，
+            // 由 Core Animation 按刷新率渲染；动画跑完再把窗口收到最终大小，免得透明区域挡住下面的点击。
+            // 开合用 expo-out（起步快、收尾软）；展开着只是换页或内容增减，高度小幅变化用短的 easeOut。
+            let heightOnly = state.isOpen && abs(frame.width - previous.width) < 0.5
+            // expo-out 起步速度最大，黑壳直接跟着它走显得生硬；改成无回弹的临界阻尼弹簧，起步柔、收尾也软
+            // 只有展开带一点回弹；收起回弹会缩到比刘海还小，高度微调也不需要
+            let duration = heightOnly ? 0.22 : (state.isOpen ? 0.4 : 0.26)
+            let curve: Animation = (state.isOpen && !heightOnly) ? .spring(duration: duration, bounce: 0.18) : .smooth(duration: duration)
+            // 回弹会冲过最终大小，窗口两侧和下方多留一圈透明余量，不然冲出去的那截被窗口边缘切平
+            let margin: CGFloat = 28
+            let room = CGRect(x: frame.minX - margin, y: frame.minY - margin, width: frame.width + margin * 2, height: frame.height + margin)
+            let union = panel.frame.union(room)
+            if union != panel.frame { panel.setFrame(union, display: true) }
+            state.layoutSize = size
+            withAnimation(curve) { state.shapeSize = size }
+            let token = settleToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.15) { [weak self] in
+                guard let self, self.settleToken == token, self.panel.frame != frame else { return }
+                self.panel.setFrame(frame, display: true)
             }
         } else {
+            state.shapeSize = size
+            state.layoutSize = size
             panel.setFrame(frame, display: true)
         }
     }
@@ -550,8 +580,13 @@ final class NotchController {
         installGestureMonitor()
         installKeyMonitor()
         startHoverPoll()
-        UsageStore.shared.refresh(reason: .panelOpened)
-        startSampling(for: state.page)
+        // 展开动画 0.38 秒里每帧都要重排 SwiftUI：刷新用量、起采样会同时改内容、触发高度变化再开一轮窗口动画，
+        // 拖到动画跑完再做，主线程才腾得出来跟上每一帧
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
+            guard let self, self.state.isOpen else { return }
+            UsageStore.shared.refresh(reason: .panelOpened)
+            self.startSampling(for: self.state.page)
+        }
     }
 
     /// ⌥⇧T：收起就钉住展开（页是当前 `state.page`），展开（钉住或悬停）就收起。
@@ -791,7 +826,7 @@ final class NotchController {
                 guard let self, self.state.isOpen, !self.state.isPinned else { return }
                 let dragging = NSEvent.pressedMouseButtons & 1 != 0
                 let mouse = NSEvent.mouseLocation
-                let verdict = HoverGrace.judge(mouse: mouse, frame: self.panel.frame, shrunkFrom: self.shrunkFrom, openedFrom: self.openedFrom)
+                let verdict = HoverGrace.judge(mouse: mouse, frame: self.targetFrame ?? self.panel.frame, shrunkFrom: self.shrunkFrom, openedFrom: self.openedFrom)
                 self.shrunkFrom = verdict.keepGrace ? self.shrunkFrom : nil
                 self.openedFrom = verdict.keepOpenedFrom ? self.openedFrom : nil
                 if dragging || verdict.inside {
@@ -809,7 +844,7 @@ final class NotchController {
     /// 钉住展开时，再点一次刘海才收起。面板里每次左键都会走到这里（页签、按钮、页内容也是），所以按位置判。
     private func clickedInside(at point: NSPoint) {
         guard state.isPinned,
-              NotchGeometry.hitsNotch(point, panelSize: panel.frame.size,
+              NotchGeometry.hitsNotch(point, panelSize: (targetFrame ?? panel.frame).size,
                                       notch: CGSize(width: state.notchWidth, height: state.notchHeight)) else { return }
         close()
     }
@@ -889,7 +924,7 @@ final class NotchController {
         }
     }
 
-    /// ⌘1–⌘9 / ⌘0：跳到会话列表第 N 行的终端，和点那一行一样：面板照旧开着、鼠标移出才收（终端被叫到前台，键盘跟着过去）。
+    /// ⌘1–⌘9 / ⌘0：跳到会话列表第 N 行的终端，和点那一行一样：跳成功后悬停展开的面板收起，钉住的不动。
     /// 跳不成就切到 AI 页，那一行红字说为什么——从别的页按的话，不切过去看不到原因。
     private func jumpToSession(at index: Int) {
         // 按分组后的显示顺序数、不数已关闭的，和行尾的 ⌘N 编号一致

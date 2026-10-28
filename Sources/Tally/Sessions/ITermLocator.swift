@@ -18,17 +18,19 @@ enum ITermLocator {
         let script = """
         tell application id "com.googlecode.iterm2"
             repeat with w in windows
-                repeat with t in tabs of w
-                    repeat with s in sessions of t
-                        if tty of s is "\(device)" then
-                            select s
-                            select t
-                            select w
-                            activate
-                            return "ok"
-                        end if
+                try
+                    repeat with t in tabs of w
+                        repeat with s in sessions of t
+                            if tty of s is "\(device)" then
+                                select s
+                                select t
+                                select w
+                                activate
+                                return "ok"
+                            end if
+                        end repeat
                     end repeat
-                end repeat
+                end try
             end repeat
             return "none"
         end tell

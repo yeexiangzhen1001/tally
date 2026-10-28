@@ -168,7 +168,7 @@ struct HeaderButton: View {
     /// 开着的功能用它着色，nil 是普通白。
     var tint: Color? = nil
     let action: () -> Void
-    @State private var hovered = false
+    @LocalState private var hovered = false
 
     var body: some View {
         Button(action: action) {

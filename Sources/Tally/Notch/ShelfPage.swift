@@ -62,9 +62,9 @@ struct ShelfPage: View {
 private struct ShelfItemView: View {
     let item: ShelfItem
     var store: ShelfStore
-    @State private var hovered = false
-    @State private var dragging = false
-    @State private var box = ShelfDragBox()
+    @LocalState private var hovered = false
+    @LocalState private var dragging = false
+    @LocalState private var box = ShelfDragBox()
 
     var body: some View {
         let url = store.fileURL(item)

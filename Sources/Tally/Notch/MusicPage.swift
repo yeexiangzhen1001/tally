@@ -102,7 +102,7 @@ private struct MusicButton: View {
     let help: String
     let size: CGFloat
     let action: () -> Void
-    @State private var hovered = false
+    @LocalState private var hovered = false
 
     var body: some View {
         Button(action: action) {

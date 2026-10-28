@@ -103,7 +103,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 /// 窗口内容：侧栏 + 当前项的表单。
 struct SettingsWindowView: View {
-    @State private var selection: SettingsSection = .general
+    @LocalState private var selection: SettingsSection = .general
 
     var body: some View {
         NavigationSplitView {

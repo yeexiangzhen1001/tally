@@ -17,8 +17,8 @@ func preferenceToggle(_ key: WritableKeyPath<Preferences, Bool>) -> Binding<Bool
 struct GeneralSettings: View {
     var preferences = PreferencesStore.shared
     var updates = UpdateChecker.shared
-    @State private var launchError: String?
-    @State private var hotKeyError: String?
+    @LocalState private var launchError: String?
+    @LocalState private var hotKeyError: String?
 
     var body: some View {
         Form {
@@ -333,8 +333,8 @@ struct ShelfSettings: View {
     var preferences = PreferencesStore.shared
     var screenshots = ScreenshotWatcher.shared
     var finder = ScreenshotFolderFinder.shared
-    @State private var typedFolder = ""
-    @State private var typedFolderError: String?
+    @LocalState private var typedFolder = ""
+    @LocalState private var typedFolderError: String?
 
     var body: some View {
         Form {
@@ -491,8 +491,8 @@ struct ShelfSettings: View {
 struct RetentionRow: View {
     let title: String
     let key: WritableKeyPath<Preferences, Int>
-    @State private var amount = 1
-    @State private var unit = RetentionFormat.Unit.minutes
+    @LocalState private var amount = 1
+    @LocalState private var unit = RetentionFormat.Unit.minutes
 
     var body: some View {
         HStack {

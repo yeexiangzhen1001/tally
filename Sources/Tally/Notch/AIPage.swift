@@ -5,7 +5,7 @@ struct AIPage: View {
     var store = SessionStore.shared
     var usage = UsageStore.shared
     /// 会话卡片翻到「已关闭」那一页没有。不落盘：每次展开面板都回到会话——已关闭的点下去会开新终端，平时不该摆在手边。
-    @State private var showingClosed = false
+    @LocalState private var showingClosed = false
 
     var body: some View {
         VStack(spacing: 8) {

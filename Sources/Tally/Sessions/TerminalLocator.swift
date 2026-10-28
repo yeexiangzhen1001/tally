@@ -31,6 +31,7 @@ enum TerminalLocator {
 
     static let vscode = "com.microsoft.VSCode"
     static let cursor = "com.todesktop.230313mzl4w4u92"
+    static let codexDesktop = "com.openai.codex"
 
     /// 纯分派，可测。`running` 的参数是 bundle id。
     static func kind(for term: String?, running: (_ bundleId: String) -> Bool) -> BackendKind {
@@ -57,6 +58,21 @@ enum TerminalLocator {
 
     @MainActor
     static func focus(session: SessionRecord) async throws {
+        // Codex 桌面版（ChatGPT.app）的会话没有终端：hook 里 TERM_PROGRAM 和 tty 都是空的，
+        // 不拦的话会落到 Ghostty 分支去找窗口。它注册了 codex:// 协议，threads/<会话 id> 直接打开对应会话
+        if session.provider == "codex", (session.term ?? "").isEmpty, (session.tty ?? "").isEmpty {
+            guard let url = URL(string: "codex://threads/\(session.sessionId)"),
+                  !NSRunningApplication.runningApplications(withBundleIdentifier: codexDesktop).isEmpty else {
+                throw Failure.notRunning("Codex")
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexDesktop) else {
+                throw Failure.notRunning("Codex")
+            }
+            _ = try await NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: configuration)
+            return
+        }
         switch kind(for: session.term, running: isRunning) {
         case .ghostty:
             do {

@@ -222,7 +222,7 @@ struct SessionEyes: View {
     var size: CGFloat = 34
     var art: BloubArt? = .bundled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appearedAt = Date()
+    @LocalState private var appearedAt = Date()
 
     var body: some View {
         Group {

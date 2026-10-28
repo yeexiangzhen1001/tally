@@ -21,7 +21,7 @@ struct UsageTrack: View {
     let elapsed: Double?
     let paused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var visible = false
+    @LocalState private var visible = false
 
     var body: some View {
         let layout = UsageTrackLayout(fraction: fraction)

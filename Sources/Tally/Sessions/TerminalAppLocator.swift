@@ -17,14 +17,17 @@ enum TerminalAppLocator {
         let script = """
         tell application id "com.apple.Terminal"
             repeat with w in windows
-                repeat with t in tabs of w
-                    if tty of t is "\(device)" then
-                        set selected tab of w to t
-                        set index of w to 1
-                        activate
-                        return "ok"
-                    end if
-                end repeat
+                -- 个别窗口没有 tabs（读不出 name 的非终端窗口），不跳过会让整次定位报错
+                try
+                    repeat with t in tabs of w
+                        if tty of t is "\(device)" then
+                            set selected tab of w to t
+                            set index of w to 1
+                            activate
+                            return "ok"
+                        end if
+                    end repeat
+                end try
             end repeat
             return "none"
         end tell
