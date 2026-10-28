@@ -656,7 +656,7 @@ final class NotchController {
         }
         let tag = opening ? "open" : "close"
         write(image, "\(tag)-snapshot.png")
-        for p in [0.15, 0.35, 0.6, 0.85, 1.0] { write(genie.debugRender(progress: p), "\(tag)-p\(Int(p * 100)).png") }
+        for p in [0.9, 0.75, 0.6, 0.45, 0.3, 0.15, 0.0] { write(genie.debugRender(progress: p), "\(tag)-p\(Int(p * 100)).png") }
     }
 
     // MARK: 展开 / 收起
